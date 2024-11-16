@@ -3,6 +3,13 @@
 #include "DHT.h"
 #include <Keypad.h>
 #include <SoftwareSerial.h>
+#include <RBDdimmer.h>//
+
+#define outputPin  9
+#define zerocross  2
+dimmerLamp dimmer(outputPin);
+int dimmer_arr[3] = {50, 75, 100};
+int index_dimmer = 3;
 
 const byte ROWS = 4;
 const byte COLS = 4;
@@ -21,10 +28,6 @@ DHT dht;
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 SoftwareSerial mySerial(12, 13);
 
-int IN3 = 9;
-int IN4 = 10;
-int ENB_PIN = 11;
-
 unsigned long DHTMillis = 0;
 unsigned long countdownMillis = 0;
 unsigned long pmReadMillis = 0;
@@ -33,9 +36,7 @@ long interval = dht.getMinimumSamplingPeriod();
 
 int hour[2] = {0, 0};
 int minute[2] = {0, 0};
-int index = 6;
-int index_pwm = 0;
-int pwm_round[3] = {127, 191, 255};
+int index_lcd = 6;
 
 float currentHumidity;
 float currentTemperature;
@@ -50,15 +51,13 @@ char T[20];
 unsigned int pm2_5 = 0;
 
 void setup() {
+  dimmer.begin(NORMAL_MODE, ON);
   lcd.begin();
   dht.setup(2);
   lcd.backlight();
   lcd.setCursor(0, 0);
   lcd.print("AutomaticAirPurifier");
   TIMELCD();
-  pinMode(IN3, OUTPUT);
-  pinMode(IN4, OUTPUT);
-  pinMode(ENB_PIN, OUTPUT);
 
   Serial.begin(9600);
   while (!Serial);
@@ -94,13 +93,9 @@ void loop() {
 
   if (countdown != previousCountDown) {
     if (countdown) {
-      digitalWrite(IN3, HIGH);
-      digitalWrite(IN4, LOW);
-      analogWrite(ENB_PIN, pwm_round[index_pwm]);
+      dimmer.setPower(dimmer_arr[index_dimmer]);
     } else {
-      digitalWrite(IN3, LOW);
-      digitalWrite(IN4, LOW);
-      analogWrite(ENB_PIN, 0);
+      dimmer.setPower(0);
       hour[0] = hour[1] = minute[0] = minute[1] = 0;
     }
     previousCountDown = countdown;
@@ -118,7 +113,7 @@ void loop() {
   }
 
   if (settingTime) {
-    lcd.setCursor(index, 3);
+    lcd.setCursor(index_lcd, 3);
     lcd.blink();
   }
 
@@ -129,22 +124,22 @@ void loop() {
 }
 
 void ReadPM2_5() {
-  int index = 0;
+  int index_pm2_5 = 0;
   char value;
   char previousValue;
 
   while (mySerial.available()) {
     value = mySerial.read();
 
-    if ((index == 0 && value != 0x42) || (index == 1 && value != 0x4d)) {
+    if ((index_pm2_5 == 0 && value != 0x42) || (index_pm2_5 == 1 && value != 0x4d)) {
       Serial.println("Cannot find the data header.");
       break;
     }
-    
-    if (index == 6) {
+
+    if (index_pm2_5 == 6) {
       previousValue = value;
     }
-    else if (index == 7) {
+    else if (index_pm2_5 == 7) {
       pm2_5 = 256 * previousValue + value;
       lcd.setCursor(0, 1);
       lcd.print("                    ");
@@ -155,7 +150,7 @@ void ReadPM2_5() {
       break;
     }
 
-    index++;
+    index_pm2_5++;
   }
   while (mySerial.available()) mySerial.read();
 }
@@ -171,14 +166,14 @@ void handleKeypadInput(char key) {
   if (key == 'B' && !countdown) {
     settingTime = !settingTime;
     if (!settingTime) {
-      index = 6;
+      index_lcd = 6;
       lcd.noBlink();
     }
   }
 
   if (key >= '0' && key <= '9' && settingTime) {
     int num = key - '0';
-    int index_check = index - 6;
+    int index_check = index_lcd - 6;
 
     if (index_check == 0 && num <= 2) {
       hour[0] = num;
@@ -193,31 +188,23 @@ void handleKeypadInput(char key) {
   }
 
   if (key == '*' && settingTime) {
-    if (index > 6) index--;
-    if (index == 8) index--;
+    if (index_lcd > 6) index_lcd--;
+    if (index_lcd == 8) index_lcd--;
   }
 
   if (key == '#' && settingTime) {
-    if (index < 10) index++;
-    if (index == 8) index++;
+    if (index_lcd < 10) index_lcd++;
+    if (index_lcd == 8) index_lcd++;
   }
 
   if (key == 'C') {
-    if (index_pwm > 0) index_pwm--;
-    if (countdown) {
-      digitalWrite(IN3, HIGH);
-      digitalWrite(IN4, LOW);
-      analogWrite(ENB_PIN, pwm_round[index_pwm]);
-    }
+    if (index_dimmer < 3) index_dimmer++;
+    if (countdown)dimmer.setPower(dimmer_arr[index_dimmer]);
   }
 
   if (key == 'D') {
-    if (index_pwm < 2) index_pwm++;
-    if (countdown) {
-      digitalWrite(IN3, HIGH);
-      digitalWrite(IN4, LOW);
-      analogWrite(ENB_PIN, pwm_round[index_pwm]);
-    }
+    if (index_dimmer > 0) index_dimmer--;
+    if (countdown)dimmer.setPower(dimmer_arr[index_dimmer]);
   }
 }
 
