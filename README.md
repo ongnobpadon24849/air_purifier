@@ -10,3 +10,6 @@ http://www.mediafire.com/file/5mh0lk744dc8pqn/Keypad.rar
 
 Library I2C LCD  
 http://www.mediafire.com/file/iavimlofgo1aq6l/LiquidCrystal_i2c.rar
+
+Library Dimmer  
+https://github.com/firebitlab/arduino/blob/master/dimmerPWM/RBDDimmer-master.zip
