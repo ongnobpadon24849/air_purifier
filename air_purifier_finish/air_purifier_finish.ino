@@ -1,18 +1,17 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-#include "DHT.h"
-#include <Keypad.h>
 #include <SoftwareSerial.h>
-#include <RBDdimmer.h>//
+#include <Keypad.h>
+#include "DHT.h"
 
-#define outputPin  9
-#define zerocross  2
-dimmerLamp dimmer(outputPin);
-int dimmer_arr[3] = {50, 75, 100};
-int index_dimmer = 3;
+#define DHTPIN 4
+#define DHTTYPE DHT11
 
-const byte ROWS = 4;
-const byte COLS = 4;
+#define IN13 7
+#define IN24 8
+#define ENAB 9
+
+const uint8_t ROWS = 4, COLS = 4;
 char keys[ROWS][COLS] = {
   {'1', '2', '3', 'A'},
   {'4', '5', '6', 'B'},
@@ -20,58 +19,66 @@ char keys[ROWS][COLS] = {
   {'*', '0', '#', 'D'}
 };
 
-byte rowPins[ROWS] = {14, 15, 8, 7};
-byte colPins[COLS] = {6, 5, 4, 3};
+uint8_t rowPins[ROWS] = {19, 18, 17, 16};
+uint8_t colPins[COLS] = {15, 14, 13, 12};
 
+DHT dht(DHTPIN, DHTTYPE);
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
-DHT dht;
 LiquidCrystal_I2C lcd(0x27, 20, 4);
-SoftwareSerial mySerial(12, 13);
+SoftwareSerial pmsSerial(5, 6);
 
-unsigned long DHTMillis = 0;
-unsigned long countdownMillis = 0;
-unsigned long pmReadMillis = 0;
+uint32_t DHTMillis, countdownMillis, pmReadMillis;
 
-long interval = dht.getMinimumSamplingPeriod();
+int16_t speed_arr[4] = {0, 127, 191, 255};
+int16_t index_arr = 3;
+uint16_t pm2_5 = 0;
 
-int hour[2] = {0, 0};
-int minute[2] = {0, 0};
-int index_lcd = 6;
+int8_t hour[2] = {0, 0};
+int8_t minute[2] = {0, 0};
+int8_t index_lcd = 6;
 
-float currentHumidity;
-float currentTemperature;
+float currentHumidity, currentTemperature;
 
-bool previousCountDown = false;
-bool settingTime = false;
-bool countdown = false;
+bool previousCountDown = false, settingTime = false, countdown = false;
 
-char H[20];
-char T[20];
-
-unsigned int pm2_5 = 0;
+char H[20], T[20];
 
 void setup() {
-  dimmer.begin(NORMAL_MODE, ON);
+  pinMode(IN13, OUTPUT);
+  pinMode(IN24, OUTPUT);
+  pinMode(ENAB, OUTPUT);
+  TCCR1B = TCCR1B & 0b11111000 | 0x02;
+
+  Serial.begin(115200);
+
+  Serial.print("void setup");
+  for (uint8_t count = 0; count <= 4; count++) {
+    delay(1000);
+    Serial.print((count != 4) ? "." : ".\n");
+  }
+
   lcd.begin();
-  dht.setup(2);
   lcd.backlight();
+  Serial.println("LCD begin!");
+
+  dht.begin();
+  Serial.println("DHT11 begin!");
+
   lcd.setCursor(0, 0);
   lcd.print("AutomaticAirPurifier");
-  TIMELCD();
+  DISPLAY_TIME();
 
-  Serial.begin(9600);
   while (!Serial);
-  mySerial.begin(9600);
+  pmsSerial.begin(9600);
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
-  interval = dht.getMinimumSamplingPeriod();
-  // Read DHT Sensor
-  if (currentMillis - DHTMillis >= interval) {
+  uint32_t currentMillis = millis();
+
+  if (currentMillis - DHTMillis >= 2000) {
     DHTMillis = currentMillis;
-    float humidity = dht.getHumidity();
-    float temperature = dht.getTemperature();
+    float humidity = dht.readHumidity();
+    float temperature = dht.readTemperature();
     if (!isnan(humidity) && !isnan(temperature)) {
       currentHumidity = humidity;
       currentTemperature = temperature;
@@ -93,9 +100,9 @@ void loop() {
 
   if (countdown != previousCountDown) {
     if (countdown) {
-      dimmer.setPower(dimmer_arr[index_dimmer]);
+      DRIVE_MOTOR(HIGH, LOW, index_arr);
     } else {
-      dimmer.setPower(0);
+      DRIVE_MOTOR(LOW, LOW, 0);
       hour[0] = hour[1] = minute[0] = minute[1] = 0;
     }
     previousCountDown = countdown;
@@ -104,12 +111,12 @@ void loop() {
   if (countdown && currentMillis - countdownMillis >= 1000) {
     countdownMillis = currentMillis;
     COUNTDOWNTIME();
-    TIMELCD();
+    DISPLAY_TIME();
   }
 
   if (currentMillis - pmReadMillis >= 1000) {
     pmReadMillis = currentMillis;
-    ReadPM2_5();
+    ReadPMS3003();
   }
 
   if (settingTime) {
@@ -120,126 +127,5 @@ void loop() {
   char key = keypad.getKey();
   if (key != NO_KEY) {
     handleKeypadInput(key);
-  }
-}
-
-void ReadPM2_5() {
-  int index_pm2_5 = 0;
-  char value;
-  char previousValue;
-
-  while (mySerial.available()) {
-    value = mySerial.read();
-
-    if ((index_pm2_5 == 0 && value != 0x42) || (index_pm2_5 == 1 && value != 0x4d)) {
-      Serial.println("Cannot find the data header.");
-      break;
-    }
-
-    if (index_pm2_5 == 6) {
-      previousValue = value;
-    }
-    else if (index_pm2_5 == 7) {
-      pm2_5 = 256 * previousValue + value;
-      lcd.setCursor(0, 1);
-      lcd.print("                    ");
-      lcd.setCursor(0, 1);
-      lcd.print("pm2.5: ");
-      lcd.print(pm2_5);
-      lcd.print(" ug/m3");
-      break;
-    }
-
-    index_pm2_5++;
-  }
-  while (mySerial.available()) mySerial.read();
-}
-
-void handleKeypadInput(char key) {
-  if (key == 'A' && !settingTime) {
-    countdown = !countdown;
-    if (countdown) {
-      countdownMillis = millis();
-    }
-  }
-
-  if (key == 'B' && !countdown) {
-    settingTime = !settingTime;
-    if (!settingTime) {
-      index_lcd = 6;
-      lcd.noBlink();
-    }
-  }
-
-  if (key >= '0' && key <= '9' && settingTime) {
-    int num = key - '0';
-    int index_check = index_lcd - 6;
-
-    if (index_check == 0 && num <= 2) {
-      hour[0] = num;
-    } else if (index_check == 1 && (hour[0] < 2 || (hour[0] == 2 && num <= 3))) {
-      hour[1] = num;
-    } else if (index_check == 3 && num <= 5) {
-      minute[0] = num;
-    } else if (index_check == 4 && num <= 9) {
-      minute[1] = num;
-    }
-    TIMELCD();
-  }
-
-  if (key == '*' && settingTime) {
-    if (index_lcd > 6) index_lcd--;
-    if (index_lcd == 8) index_lcd--;
-  }
-
-  if (key == '#' && settingTime) {
-    if (index_lcd < 10) index_lcd++;
-    if (index_lcd == 8) index_lcd++;
-  }
-
-  if (key == 'C') {
-    if (index_dimmer < 3) index_dimmer++;
-    if (countdown)dimmer.setPower(dimmer_arr[index_dimmer]);
-  }
-
-  if (key == 'D') {
-    if (index_dimmer > 0) index_dimmer--;
-    if (countdown)dimmer.setPower(dimmer_arr[index_dimmer]);
-  }
-}
-
-void TIMELCD() {
-  lcd.setCursor(0, 3);
-  lcd.print("                ");
-  lcd.setCursor(0, 3);
-  lcd.print("Time: ");
-  lcd.print(hour[0]);
-  lcd.print(hour[1]);
-  lcd.print(":");
-  lcd.print(minute[0]);
-  lcd.print(minute[1]);
-}
-
-void COUNTDOWNTIME() {
-  if (minute[1] > 0) {
-    minute[1]--;
-  } else {
-    if (minute[0] > 0) {
-      minute[0]--;
-      minute[1] = 9;
-    } else {
-      if (hour[1] > 0) {
-        hour[1]--;
-        minute[0] = 5;
-        minute[1] = 9;
-      } else if (hour[0] > 0) {
-        hour[0]--;
-        hour[1] = 9;
-        minute[0] = 5;
-        minute[1] = 9;
-      } else {
-        countdown = false;
-      }
-    }
   }
 }
