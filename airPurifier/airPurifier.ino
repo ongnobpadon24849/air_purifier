@@ -20,8 +20,8 @@ char keys[ROWS][COLS] = {
   {'*', '0', '#', 'D'}
 };
 
-uint8_t rowPins[ROWS] = {19, 18, 17, 16};
-uint8_t colPins[COLS] = {15, 14, 13, 12};
+uint8_t rowPins[ROWS] = {14, 15, 16, 17};
+uint8_t colPins[COLS] = {10, 11, 12, 13};
 
 // Prototypes
 DHT dht(DHTPIN, DHTTYPE);
@@ -29,7 +29,7 @@ Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 SoftwareSerial pmsSerial(5, 6);
 
-uint32_t DHTMillis, countdownMillis, pmReadMillis;
+uint32_t DHTMillis, countdownMillis, pmReadMillis, printMillis;
 
 int16_t speed_arr[4] = {0, 127, 191, 255};
 int16_t index_arr = 3;
@@ -67,8 +67,8 @@ void setup() {
   delay(1000);
   lcd.clear();
 
-  lcd.setCursor(0, 0);
-  lcd.print("AutomaticAirPurifier");
+  lcd.setCursor(4, 0);
+  lcd.print("AirPurifier");
 
   lcd.setCursor(0, 1);
   lcd.print("pm2.5: ");
@@ -83,15 +83,15 @@ void setup() {
   lcd.print("T:");
   lcd.print("    ");
   lcd.print((char)223);
-  lcd.print("c");
+  lcd.print("C");
 
   DISPLAY_TIME();
 
   lcd.setCursor(12, 3);
   lcd.print("FAN:");
   lcd.print(index_arr);
-  //  while (!Serial);
-  //  pmsSerial.begin(9600);
+  while (!Serial);
+  pmsSerial.begin(9600);
 }
 
 void loop() {
@@ -119,7 +119,7 @@ void loop() {
     lcd.print("T:");
     lcd.print(tempStr);
     lcd.print((char)223);
-    lcd.print("c");
+    lcd.print("C");
     DHTMillis = currentMillis;
   }
 
@@ -133,13 +133,13 @@ void loop() {
     previousCountDown = countdown;
   }
 
-  if (countdown && currentMillis - countdownMillis >= 60000) {
+  if (countdown && currentMillis - countdownMillis >= 1000) {
     COUNTDOWNTIME();
     DISPLAY_TIME();
     countdownMillis = currentMillis;
   }
 
-  if (currentMillis - pmReadMillis >= 1000) {
+  if (currentMillis - pmReadMillis >= 5000) {
     ReadPMS3003();
     pmReadMillis = currentMillis;
   }
@@ -149,6 +149,10 @@ void loop() {
     lcd.blink();
   }
 
+//  if (currentMillis - printMillis >= 1000) {
+//    PRINTSERIAL();
+//    printMillis = currentMillis;
+//  }
   char key = keypad.getKey();
   if (key != NO_KEY) {
     handleKeypadInput(key);
@@ -177,12 +181,30 @@ void ReadPMS3003() {
       if (pm2_5 < 1000) {
         currentPm2_5 = pm2_5;
       }
-      lcd.setCursor(0, 1);
-      lcd.print("                    ");
-      lcd.setCursor(0, 1);
-      lcd.print("pm2.5: ");
-      lcd.print(currentPm2_5);
-      lcd.print(" ug/m3");
+      if (currentPm2_5 < 10) {
+        lcd.setCursor(7, 1);
+        lcd.print(currentPm2_5);
+        lcd.setCursor(8, 1);
+        lcd.print("            ");
+        lcd.setCursor(9, 1);
+        lcd.print("ug/m3");
+      }
+      else if (currentPm2_5 < 100) {
+        lcd.setCursor(7, 1);
+        lcd.print(currentPm2_5);
+        lcd.setCursor(9, 1);
+        lcd.print("           ");
+        lcd.setCursor(10, 1);
+        lcd.print("ug/m3");
+      }
+      else if (currentPm2_5 < 1000) {
+        lcd.setCursor(7, 1);
+        lcd.print(currentPm2_5);
+        lcd.setCursor(10, 1);
+        lcd.print("          ");
+        lcd.setCursor(11, 1);
+        lcd.print("ug/m3");
+      }
       break;
     }
 
@@ -193,6 +215,7 @@ void ReadPMS3003() {
 
 // Handle keypad input
 void handleKeypadInput(char key) {
+  Serial.println(key);
   switch (key) {
     case 'A':
       if (settingTime == false) {
@@ -205,9 +228,10 @@ void handleKeypadInput(char key) {
         settingTime = !settingTime;
         if (!settingTime) {
           index_lcd = 6;
+          lcd.noBlink();
+        }else{
           hour[0] = hour[1] = minute[0] = minute[1] = 0;
           DISPLAY_TIME();
-          lcd.noBlink();
         }
       }
       break;
@@ -228,24 +252,46 @@ void handleKeypadInput(char key) {
 
     case 'C':
       if (index_arr < 3) index_arr++;
+      if (countdown) {
+        DRIVE_MOTOR(HIGH, LOW, index_arr);
+      }else{
+        DRIVE_MOTOR(LOW, LOW, 0);
+      }
+      lcd.setCursor(16, 3);
+      lcd.print(index_arr);
       break;
 
     case 'D':
       if (index_arr > 0) index_arr--;
+      if (countdown) {
+        DRIVE_MOTOR(HIGH, LOW, index_arr);
+      }else{
+        DRIVE_MOTOR(LOW, LOW, 0);
+      }
+      lcd.setCursor(16, 3);
+      lcd.print(index_arr);
       break;
 
     default:
       if (key >= '0' && key <= '9' && settingTime) {
         int8_t num = key - '0';
         int8_t index_check = index_lcd - 6;
-        if (index_check % 2 == 0) {
-          if (num <= 2) {
-            hour[index_check / 2] = num;
+        if (index_check == 0) {
+          if (num < 3) {
+            hour[0] = num;
           }
-        } else {
-          if (num <= 9) {
-            minute[index_check / 2] = num;
+        } else if (index_check == 1) {
+          if (hour[0] == 2 && num < 4) {
+            hour[1] = num;
+          } else if (hour[0] < 2) {
+            hour[1] = num;
           }
+        } else if (index_check == 3) {
+          if (num < 6) {
+            minute[0] = num;
+          }
+        } else if (index_check == 4) {
+          minute[1] = num;
         }
         DISPLAY_TIME();
       }
@@ -262,7 +308,7 @@ void DISPLAY_TIME() {
   lcd.print(":");
   lcd.print(minute[0]);
   lcd.print(minute[1]);
-  lcd.print("     ");
+  lcd.print(" ");
 }
 
 void COUNTDOWNTIME() {
@@ -299,4 +345,27 @@ void DRIVE_MOTOR(bool VCC, bool GND, uint8_t INDEX) {
   digitalWrite(IN13, VCC);
   digitalWrite(IN24, GND);
   analogWrite(ENAB, speed_arr[INDEX]);
+}
+
+void PRINTSERIAL(){
+  Serial.print("pm2.5: ");
+  Serial.print(currentPm2_5);
+  Serial.print(" ug/m3, ");
+  Serial.print("RH: ");
+  Serial.print(currentHumidity);
+  Serial.print("%, ");
+  Serial.print("T: ");
+  Serial.print(currentTemperature);
+  Serial.print((char)223);
+  Serial.print("C, ");
+  Serial.print("FAN: ");
+  Serial.print(index_arr);
+  Serial.print(", ");
+  Serial.print("Time: ");
+  Serial.print(hour[0]);
+  Serial.print(hour[1]);
+  Serial.print(":");
+  Serial.print(minute[0]);
+  Serial.print(minute[1]);
+  Serial.println();
 }
